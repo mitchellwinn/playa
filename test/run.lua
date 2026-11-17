@@ -1,10 +1,10 @@
 -- Headless test: aseprite -b --script-param root=<repo> --script-param out=<dir> --script test/run.lua
 local root, out = app.params.root, app.params.out
-SPLAYA_PATH = app.fs.joinPath(root, "src")
-local codec = dofile(app.fs.joinPath(SPLAYA_PATH, "codec.lua"))
-local recorder = dofile(app.fs.joinPath(SPLAYA_PATH, "recorder.lua"))
-local player = dofile(app.fs.joinPath(SPLAYA_PATH, "player.lua"))
-local export = dofile(app.fs.joinPath(SPLAYA_PATH, "export.lua"))
+PLAYA_PATH = app.fs.joinPath(root, "src")
+local codec = dofile(app.fs.joinPath(PLAYA_PATH, "codec.lua"))
+local recorder = dofile(app.fs.joinPath(PLAYA_PATH, "recorder.lua"))
+local player = dofile(app.fs.joinPath(PLAYA_PATH, "player.lua"))
+local export = dofile(app.fs.joinPath(PLAYA_PATH, "export.lua"))
 
 local fails = 0
 local function check(cond, msg)
@@ -93,5 +93,15 @@ for _, fmt in ipairs{ "gif", "webp", "png", "mp4" } do
   local exists = app.fs.isFile(fmt == "png" and app.fs.joinPath(out, "tl_00001.png") or path)
   check(ok and exists, "export " .. fmt .. ": " .. tostring(msg))
 end
+
+-- recordings saved under the 0.1.0 property name still load, then move over
+local legacy = Sprite(8, 8)
+legacy.properties("s.playa").chunks = { "e,0,1,0,0,0,0,1,\ne,0,1,0,0,0,0,2," }
+legacy.properties("s.playa").on = true
+local lrec = recorder.load(legacy)
+check(#lrec.lines == 2 and lrec.on == true, "legacy recording loads")
+lrec:save()
+check(legacy.properties("s.playa").chunks == nil, "legacy properties cleared after save")
+check(#recorder.load(legacy).lines == 2, "recording readable under new name")
 
 print(fails == 0 and "ALL PASSED" or (fails .. " FAILED"))

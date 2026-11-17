@@ -1,4 +1,4 @@
--- s.playa export: renders a timelapse to GIF, WebP, PNG frames or MP4.
+-- Playa export: renders a timelapse to GIF, WebP, PNG frames or MP4.
 
 local M = {}
 
@@ -60,7 +60,7 @@ function M.run(player, opts)
     opts.bg = Color{ r = 255, g = 255, b = 255 }  -- video has no transparency
   end
 
-  SPLAYA_BUSY = true
+  PLAYA_BUSY = true
   local ok, result = pcall(function()
     player:reset()
 
@@ -92,7 +92,7 @@ function M.run(player, opts)
       dir = app.fs.filePath(opts.path)
       base = app.fs.fileTitle(opts.path) .. "_"
     else
-      dir = app.fs.joinPath(app.fs.tempPath, "splaya-" .. os.time())
+      dir = app.fs.joinPath(app.fs.tempPath, "playa-" .. os.time())
       app.fs.makeAllDirectories(dir)
       base = "f_"
     end
@@ -131,7 +131,7 @@ function M.run(player, opts)
     end
     return string.format("Saved %s (%d frames)", app.fs.fileName(opts.path), n)
   end)
-  SPLAYA_BUSY = false
+  PLAYA_BUSY = false
   return ok, result
 end
 

@@ -1,4 +1,4 @@
--- s.playa recorder: watches a sprite and logs every visible change as a patch.
+-- Playa recorder: watches a sprite and logs every visible change as a patch.
 --
 -- A recording is a list of text lines, one per change event:
 --
@@ -16,14 +16,15 @@
 -- Every change event writes exactly one e/u/r/h line, even an invisible one,
 -- so undo lines can be matched to the edits they revert.
 --
--- Lines are stored in the sprite's "s.playa" extension properties, chunked
+-- Lines are stored in the sprite's "playa" extension properties, chunked
 -- because a single .aseprite string property holds at most 64 KB.
 
-local codec = dofile(app.fs.joinPath(SPLAYA_PATH, "codec.lua"))
+local codec = dofile(app.fs.joinPath(PLAYA_PATH, "codec.lua"))
 
 local M = {}
 
-local PROP = "s.playa"
+local PROP = "playa"
+local LEGACY_PROP = "s.playa"  -- name used by 0.1.0 builds
 local CHUNK = 60000
 local FORMAT = 1
 
@@ -84,13 +85,22 @@ Rec.__index = Rec
 
 function M.load(spr)
   local props = spr.properties(PROP)
+  local migrated = false
+  if props.chunks == nil then
+    local old = spr.properties(LEGACY_PROP)
+    if old.chunks ~= nil or old.on ~= nil then
+      props = old
+      migrated = true
+    end
+  end
   local rec = setmetatable({
     sprite = spr,
     lines = {},
     cache = {},      -- frame -> { w, h, bytes, logged }
     pending = nil,   -- kind set by the command hook before a change event
     on = props.on,   -- nil: never decided for this sprite (auto-record pref applies)
-    dirty = false,
+    dirty = migrated,   -- moved to the current property name on next save
+    migrated = migrated,
   }, Rec)
   local chunks = props.chunks
   if type(chunks) == "table" and #chunks > 0 then
@@ -108,6 +118,10 @@ function Rec:save()
   props.format = FORMAT
   props.on = self.on
   props.chunks = chunks
+  if self.migrated then
+    self.sprite.properties(LEGACY_PROP, {})
+    self.migrated = false
+  end
   self.dirty = false
 end
 

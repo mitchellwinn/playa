@@ -1,7 +1,7 @@
--- s.playa dialogs: timelapse preview and export settings.
+-- Playa dialogs: timelapse preview and export settings.
 
-local player = dofile(app.fs.joinPath(SPLAYA_PATH, "player.lua"))
-local export = dofile(app.fs.joinPath(SPLAYA_PATH, "export.lua"))
+local player = dofile(app.fs.joinPath(PLAYA_PATH, "player.lua"))
+local export = dofile(app.fs.joinPath(PLAYA_PATH, "export.lua"))
 
 local M = {}
 
@@ -72,7 +72,7 @@ function M.export(rec, p, prefs)
     hold = math.max(0, d.hold), scale = math.max(1, d.scale),
     bg = (not d.transparent) and d.bg or nil,
   })
-  app.alert{ title = "s.playa", text = ok and msg or ("Export failed: " .. tostring(msg)) }
+  app.alert{ title = "Playa", text = ok and msg or ("Export failed: " .. tostring(msg)) }
 end
 
 -- Preview --------------------------------------------------------------------
@@ -85,9 +85,9 @@ function M.play(rec, prefs)
   local p = player.new(entries, spr.width, spr.height)
   local total = p:total()
   if total == 0 then
-    app.alert{ title = "s.playa", text = rec.on and
+    app.alert{ title = "Playa", text = rec.on and
       "Nothing recorded yet. Draw something, then play it back here."
-      or "This sprite has no recording. Turn on File > s.playa > Record This Sprite." }
+      or "This sprite has no recording. Turn on File > Export > Playa > Record This Sprite." }
     return
   end
 
@@ -122,7 +122,7 @@ function M.play(rec, prefs)
     setPos(pos + perTick)
   end }
 
-  dlg = Dialog{ title = "s.playa Timelapse", onclose = function() timer:stop() end }
+  dlg = Dialog{ title = "Playa", onclose = function() timer:stop() end }
   dlg:label{ id = "stats", text = stats() }
   dlg:canvas{ id = "view", width = VIEW, height = VIEW,
     onpaint = function(ev)

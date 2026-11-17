@@ -1,7 +1,7 @@
--- s.playa: records every stroke into the .aseprite file and plays it back as
--- a timelapse. https://github.com/mitchellwinn/s-playa
+-- Playa: records every stroke into the .aseprite file and plays it back as
+-- a timelapse. https://github.com/mitchellwinn/playa
 
-SPLAYA_BUSY = false
+PLAYA_BUSY = false
 
 local recorder, player, ui
 
@@ -34,9 +34,9 @@ local function attach(spr)
   if rec.on == nil then rec.on = prefs.auto ~= false end
   local entry = { sprite = spr, rec = rec }
   entry.listener = spr.events:on("change", function(ev)
-    if SPLAYA_BUSY then return end
+    if PLAYA_BUSY then return end
     local ok, err = pcall(rec.onChange, rec, ev)
-    if not ok then print("s.playa: " .. tostring(err)) end
+    if not ok then print("Playa: " .. tostring(err)) end
   end)
   recs[#recs + 1] = entry
   if rec.on then rec:start() end
@@ -49,19 +49,19 @@ local function active()
 end
 
 local function onSiteChange()
-  if SPLAYA_BUSY then return end
+  if PLAYA_BUSY then return end
   prune()
   local rec = active()
   if rec and rec.on and app.frame then
     local ok, err = pcall(rec.look, rec, app.frame.frameNumber)
-    if not ok then print("s.playa: " .. tostring(err)) end
+    if not ok then print("Playa: " .. tostring(err)) end
   end
 end
 
 local SAVE = { SaveFile = true, SaveFileAs = true, SaveFileCopyAs = true }
 
 local function beforeCommand(ev)
-  if SPLAYA_BUSY or not app.sprite then return end
+  if PLAYA_BUSY or not app.sprite then return end
   local rec = find(app.sprite)
   if not rec then return end
   if ev.name == "Undo" then rec.pending = "u"
@@ -78,10 +78,10 @@ local function afterCommand(ev)
 end
 
 function init(plugin)
-  SPLAYA_PATH = app.fs.joinPath(plugin.path, "src")
-  recorder = dofile(app.fs.joinPath(SPLAYA_PATH, "recorder.lua"))
-  player = dofile(app.fs.joinPath(SPLAYA_PATH, "player.lua"))
-  ui = dofile(app.fs.joinPath(SPLAYA_PATH, "ui.lua"))
+  PLAYA_PATH = app.fs.joinPath(plugin.path, "src")
+  recorder = dofile(app.fs.joinPath(PLAYA_PATH, "recorder.lua"))
+  player = dofile(app.fs.joinPath(PLAYA_PATH, "player.lua"))
+  ui = dofile(app.fs.joinPath(PLAYA_PATH, "ui.lua"))
   prefs = plugin.preferences
   if prefs.auto == nil then prefs.auto = true end
 
@@ -89,10 +89,10 @@ function init(plugin)
   listeners.before = app.events:on("beforecommand", beforeCommand)
   listeners.after = app.events:on("aftercommand", afterCommand)
 
-  plugin:newMenuGroup{ id = "splaya_menu", title = "s.playa Timelapse", group = "file_export" }
+  plugin:newMenuGroup{ id = "playa_menu", title = "Playa", group = "file_export" }
 
   plugin:newCommand{
-    id = "SplayaRecord", title = "Record This Sprite", group = "splaya_menu",
+    id = "PlayaRecord", title = "Record This Sprite", group = "playa_menu",
     onenabled = function() return app.sprite ~= nil end,
     onchecked = function()
       local rec = app.sprite and find(app.sprite)
@@ -106,7 +106,7 @@ function init(plugin)
   }
 
   plugin:newCommand{
-    id = "SplayaPlay", title = "Play Timelapse...", group = "splaya_menu",
+    id = "PlayaPlay", title = "Play Timelapse...", group = "playa_menu",
     onenabled = function() return app.sprite ~= nil end,
     onclick = function()
       local rec = active()
@@ -115,35 +115,35 @@ function init(plugin)
   }
 
   plugin:newCommand{
-    id = "SplayaExport", title = "Export Timelapse...", group = "splaya_menu",
+    id = "PlayaExport", title = "Export Timelapse...", group = "playa_menu",
     onenabled = function() return app.sprite ~= nil end,
     onclick = function()
       local rec = active()
       if not rec then return end
       local p = player.new(player.parse(rec.lines), rec.sprite.width, rec.sprite.height)
       if p:total() == 0 then
-        app.alert{ title = "s.playa", text = "Nothing recorded yet." }
+        app.alert{ title = "Playa", text = "Nothing recorded yet." }
         return
       end
       ui.export(rec, p, prefs)
     end,
   }
 
-  plugin:newMenuSeparator{ group = "splaya_menu" }
+  plugin:newMenuSeparator{ group = "playa_menu" }
 
   plugin:newCommand{
-    id = "SplayaAuto", title = "Record Sprites Automatically", group = "splaya_menu",
+    id = "PlayaAuto", title = "Record Sprites Automatically", group = "playa_menu",
     onchecked = function() return prefs.auto ~= false end,
     onclick = function() prefs.auto = not (prefs.auto ~= false) end,
   }
 
   plugin:newCommand{
-    id = "SplayaClear", title = "Delete Recording...", group = "splaya_menu",
+    id = "PlayaClear", title = "Delete Recording...", group = "playa_menu",
     onenabled = function() return app.sprite ~= nil end,
     onclick = function()
       local rec = active()
       if not rec then return end
-      local answer = app.alert{ title = "s.playa",
+      local answer = app.alert{ title = "Playa",
         text = { "Delete this sprite's timelapse recording?",
                  "It is removed from the file the next time you save." },
         buttons = { "Delete", "Cancel" } }

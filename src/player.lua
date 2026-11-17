@@ -1,6 +1,6 @@
--- s.playa player: rebuilds the canvas from recorded lines, step by step.
+-- Playa player: rebuilds the canvas from recorded lines, step by step.
 
-local codec = dofile(app.fs.joinPath(SPLAYA_PATH, "codec.lua"))
+local codec = dofile(app.fs.joinPath(PLAYA_PATH, "codec.lua"))
 
 local M = {}
 

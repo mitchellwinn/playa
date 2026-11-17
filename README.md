@@ -1,8 +1,8 @@
-# s.playa
+# Playa
 
 **Speed-draw timelapses for Aseprite, without screen recording.**
 
-s.playa quietly records every stroke you make and saves the recording inside
+Playa quietly records every stroke you make and saves the recording inside
 your `.aseprite` file. Open the file any time, even weeks later, and play the
 whole drawing back or export it as a GIF, WebP, MP4 or PNG frames.
 
@@ -17,8 +17,8 @@ whole drawing back or export it as a GIF, WebP, MP4 or PNG frames.
 
 ## Install
 
-1. Download `s-playa.aseprite-extension` from the
-   [latest release](https://github.com/mitchellwinn/s-playa/releases/latest).
+1. Download `playa.aseprite-extension` from the
+   [latest release](https://github.com/mitchellwinn/playa/releases/latest).
 2. Double-click it, or in Aseprite go to **Edit > Preferences > Extensions >
    Add Extension** and pick the file.
 
@@ -26,7 +26,7 @@ Requires Aseprite 1.3 or newer.
 
 ## Use
 
-Everything is under **File > Export > s.playa Timelapse**:
+Everything is under **File > Export > Playa**:
 
 | Command | What it does |
 | --- | --- |
@@ -52,7 +52,7 @@ on macOS). GIF, WebP and PNG work with nothing extra.
 
 ## How it works
 
-Every edit in Aseprite fires a change event. s.playa compares the canvas
+Every edit in Aseprite fires a change event. Playa compares the canvas
 before and after, keeps the rectangle of pixels that changed, and compresses
 it (run-length encoding, then base64). The patches are stored as custom
 properties on the sprite, which Aseprite saves inside the `.aseprite` file.
@@ -73,14 +73,14 @@ any length or speed after the fact.
 
 ```sh
 scripts/test.sh    # headless tests, needs Aseprite installed
-scripts/build.sh   # builds dist/s-playa.aseprite-extension
+scripts/build.sh   # builds dist/playa.aseprite-extension
 ```
 
 The code is plain Lua in `src/`:
 
 | File | Role |
 | --- | --- |
-| `splaya.lua` | Extension entry point: menus and event hooks. |
+| `playa.lua` | Extension entry point: menus and event hooks. |
 | `recorder.lua` | Change detection and storage in sprite properties. |
 | `codec.lua` | RLE + base64 pixel encoding. |
 | `player.lua` | Rebuilds the canvas from the recording. |

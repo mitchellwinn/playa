@@ -1,4 +1,4 @@
--- s.playa codec: compact text encoding for RGBA pixel data.
+-- Playa codec: compact text encoding for RGBA pixel data.
 --
 -- Pixels are run-length encoded as 32-bit values, then base64'd so they can
 -- live in Aseprite's string properties (which cannot hold NUL bytes).
