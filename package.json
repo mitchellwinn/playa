@@ -2,7 +2,7 @@
   "name": "playa",
   "displayName": "Playa",
   "description": "Records every stroke into your .aseprite file and plays it back as a timelapse. Export to GIF, WebP, MP4 or PNG frames.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "author": { "name": "Mitchell Winn", "url": "https://github.com/mitchellwinn/playa" },
   "contributors": [],
   "publisher": "mitchellwinn",

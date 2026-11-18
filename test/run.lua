@@ -124,6 +124,87 @@ for _, e in ipairs(de) do if e.hidden then dhidden = dhidden + 1 end end
 check(dhidden == 4, "queued undos still pair with their edits (got " .. dhidden .. ")")
 PLAYA_DEFER = nil
 
+-- stroke order from the cursor path --------------------------------------
+local order = dofile(app.fs.joinPath(PLAYA_PATH, "order.lua"))
+local ps = Sprite(32, 32)
+local prec = recorder.load(ps)
+ps.events:on("change", function(ev) prec:onChange(ev) end)
+prec:start()
+local cursor, tick = nil, 0
+PLAYA_POINTER = function()
+  if not cursor then return nil end
+  tick = tick + 1
+  return cursor.x, cursor.y, tick
+end
+local function stroke(from, to, withPath)
+  cursor = nil
+  if withPath then
+    local steps = 10
+    for k = 0, steps do
+      tick = tick + 3
+      prec:pointer(math.floor(from.x + (to.x - from.x) * k / steps + 0.5),
+                   math.floor(from.y + (to.y - from.y) * k / steps + 0.5), tick)
+    end
+  end
+  cursor = to
+  app.useTool{ tool = "pencil", color = red, points = { from, to } }
+  cursor = nil
+end
+stroke(Point(2, 2), Point(20, 2), true)     -- left to right, with path
+stroke(Point(20, 6), Point(2, 6), true)     -- right to left, with path
+stroke(Point(2, 10), Point(20, 10), false)  -- no path, cursor ends at the right
+stroke(Point(25, 2), Point(25, 25), false)  -- no path, vertical, ends at bottom
+local ordered = player.parse(prec.lines)
+player.hideUndone(ordered)
+local op = player.new(ordered, ps.width, ps.height, "pixels")
+local strokesSeen = {}
+for _, idx in ipairs(op.steps) do
+  local e = ordered[idx]
+  if e.order then strokesSeen[#strokesSeen + 1] = e end
+end
+check(#strokesSeen == 4, "four strokes ordered (got " .. #strokesSeen .. ")")
+local function ends(e) local px = e.order.pixels return px[1], px[#px] end
+local a1, z1 = ends(strokesSeen[1])
+check(a1.x == 2 and z1.x == 20, "path: left-to-right stroke draws from the left")
+local a2, z2 = ends(strokesSeen[2])
+check(a2.x == 20 and z2.x == 2, "path: right-to-left stroke draws from the right")
+local a3, z3 = ends(strokesSeen[3])
+check(a3.x == 2 and z3.x == 20, "cursor only: line finishes where the cursor stopped")
+local a4, z4 = ends(strokesSeen[4])
+check(a4.y == 2 and z4.y == 25, "cursor only: vertical line runs toward the cursor")
+check(strokesSeen[1].order.ticks > 0, "path strokes carry their duration")
+
+-- a fill floods out from where the cursor clicked
+app.useTool{ tool = "rectangle", color = blue, points = { Point(4, 14), Point(16, 26) } }
+cursor = Point(10, 20)
+app.useTool{ tool = "paint_bucket", color = green, points = { Point(10, 20) } }
+cursor = nil
+local fe = player.parse(prec.lines)
+player.hideUndone(fe)
+local fp = player.new(fe, ps.width, ps.height, "pixels")
+local fill = fe[fp.steps[#fp.steps]]
+local first = fill.order.pixels[1]
+check(#fill.order.pixels > 50 and math.abs(first.x - 10) <= 1 and math.abs(first.y - 20) <= 1,
+      "bucket fill starts at the click (" .. first.x .. "," .. first.y .. ")")
+
+-- every mode ends on the real canvas; partway through a stroke is partial
+local pfinal = recorder.composite(ps, 1)
+for _, mode in ipairs{ "strokes", "pixels", "realtime" } do
+  local mp = player.new(player.parse(prec.lines), ps.width, ps.height, mode)
+  local total = mp:totalUnits()
+  check(mp:at(total).bytes == pfinal, mode .. ": timeline ends on the final canvas")
+  check(mp:at(0).bytes ~= pfinal, mode .. ": timeline starts before the drawing")
+end
+local pp = player.new(player.parse(prec.lines), ps.width, ps.height, "pixels")
+local s1 = 1
+while pp.entries[pp.steps[s1]].full do s1 = s1 + 1 end
+local base = s1 > 1 and pp.cum[s1 - 1] or 0
+local before = pp:at(base).bytes
+local mid = pp:at(base + (pp.cum[s1] - base) / 2).bytes
+local after = pp:at(pp.cum[s1]).bytes
+check(mid ~= before and mid ~= after, "pixels: halfway through the first stroke is partly drawn")
+PLAYA_POINTER = nil
+
 -- recordings saved under the 0.1.0 property name still load, then move over
 local legacy = Sprite(8, 8)
 legacy.properties("s.playa").chunks = { "e,0,1,0,0,0,0,1,\ne,0,1,0,0,0,0,2," }

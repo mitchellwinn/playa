@@ -8,6 +8,15 @@ local M = {}
 local VIEW = 320  -- preview box size in UI pixels
 local FORMATS = { "GIF", "WebP", "MP4", "PNG frames" }
 local EXT = { GIF = "gif", WebP = "webp", MP4 = "mp4", ["PNG frames"] = "png" }
+local DETAILS = { "Strokes", "Pixels", "Real time" }
+local MODE = { Strokes = "strokes", Pixels = "pixels", ["Real time"] = "realtime" }
+local DETAIL_HELP = {
+  Strokes = "Each stroke appears at once.",
+  Pixels = "Strokes draw in pixel by pixel, in drawing order.",
+  ["Real time"] = "Strokes draw at your speed; long pauses are shortened.",
+}
+
+local function detailOf(prefs) return MODE[prefs.detail or "Pixels"] and (prefs.detail or "Pixels") or "Pixels" end
 
 local function duration(seconds)
   local h, m = seconds // 3600, (seconds % 3600) // 60
@@ -42,6 +51,7 @@ function M.export(rec, p, prefs)
   dlg:file{ id = "path", label = "Save to", save = true,
     filename = defaultPath(spr, EXT[format]), filetypes = { "gif", "webp", "mp4", "png" } }
   dlg:separator{ text = "Timing" }
+  dlg:combobox{ id = "detail", label = "Detail", option = detailOf(prefs), options = DETAILS }
   dlg:number{ id = "seconds", label = "Length (sec)", text = tostring(ex.seconds or 15), decimals = 1 }
   dlg:number{ id = "fps", label = "Frames/sec", text = tostring(ex.fps or 25), decimals = 0 }
   dlg:number{ id = "hold", label = "Hold end (sec)", text = tostring(ex.hold or 2), decimals = 1 }
@@ -62,8 +72,10 @@ function M.export(rec, p, prefs)
   if not d.ok then return end
   prefs.export = { format = d.format, seconds = d.seconds, fps = d.fps, hold = d.hold,
                    transparent = d.transparent, hide = d.hide }
+  prefs.detail = d.detail
 
   if d.hide then player.hideUndone(p.entries) else player.showAll(p.entries) end
+  p.mode = MODE[d.detail]
   p:refresh()
 
   local ok, msg = export.run(p, {
@@ -80,35 +92,41 @@ end
 function M.play(rec, prefs)
   local spr = rec.sprite
   local entries = player.parse(rec.lines)
-  local hide = true
   player.hideUndone(entries)
-  local p = player.new(entries, spr.width, spr.height)
-  local total = p:total()
-  if total == 0 then
+  local detail = detailOf(prefs)
+  local p = player.new(entries, spr.width, spr.height, MODE[detail])
+  if p:total() == 0 then
     app.alert{ title = "Playa", text = rec.on and
       "Nothing recorded yet. Draw something, then play it back here."
-      or "This sprite has no recording. Turn on File > Export > Playa > Record This Sprite." }
+      or "This sprite has no recording. Turn on File > Playa > Record This Sprite." }
     return
   end
 
   local zoom = math.min(VIEW / p.width, VIEW / p.height)
   if zoom >= 1 then zoom = math.floor(zoom) end
   local vw, vh = math.max(1, math.floor(p.width * zoom)), math.max(1, math.floor(p.height * zoom))
+
+  -- Positions are timeline units; the slider works in whole units.
+  local total = p:totalUnits()
   local pos = total
-  p:seek(pos)
+  local speed = 1
+  p:at(pos)
 
   local timer, dlg
-  -- Aim for about ten seconds of playback at 30 ticks per second.
-  local perTick = math.max(1, math.ceil(total / 300))
 
-  local function stats()
-    return string.format("%d strokes  ·  %s drawing", total, duration(player.drawingTime(entries)))
+  local function perTick()
+    -- about ten seconds of playback at 30 ticks per second, times the speed
+    return total / 300 * speed
   end
 
-  local function setPos(n)
-    pos = math.max(0, math.min(total, n))
-    p:seek(pos)
-    dlg:modify{ id = "pos", value = pos }
+  local function stats()
+    return string.format("%d strokes  ·  %s drawing", p:total(), duration(player.drawingTime(entries)))
+  end
+
+  local function setPos(u, fromSlider)
+    pos = math.max(0, math.min(total, u))
+    p:at(pos)
+    if not fromSlider then dlg:modify{ id = "pos", value = math.floor(pos + 0.5) } end
     dlg:repaint()
   end
 
@@ -117,9 +135,20 @@ function M.play(rec, prefs)
     dlg:modify{ id = "play", text = "Play" }
   end
 
+  local function rebuild()
+    stop()
+    if dlg.data.hide then player.hideUndone(entries) else player.showAll(entries) end
+    p.mode = MODE[dlg.data.detail]
+    p:refresh()
+    total = p:totalUnits()
+    pcall(function() dlg:modify{ id = "pos", max = math.max(1, math.ceil(total)) } end)
+    dlg:modify{ id = "stats", text = stats() }
+    setPos(total)
+  end
+
   timer = Timer{ interval = 1 / 30, ontick = function()
     if pos >= total then stop() return end
-    setPos(pos + perTick)
+    setPos(pos + perTick())
   end }
 
   dlg = Dialog{ title = "Playa", onclose = function() timer:stop() end }
@@ -140,24 +169,22 @@ function M.play(rec, prefs)
       local img = p:current()
       gc:drawImage(img, img.bounds, Rectangle(ox, oy, vw, vh))
     end }
-  dlg:slider{ id = "pos", min = 0, max = total, value = pos,
-    onchange = function() stop() setPos(dlg.data.pos) end }
+  dlg:slider{ id = "pos", min = 0, max = math.max(1, math.ceil(total)), value = math.ceil(total),
+    onchange = function() stop() setPos(dlg.data.pos, true) end }
+  dlg:combobox{ id = "detail", label = "Detail", option = detail, options = DETAILS,
+    onchange = function()
+      prefs.detail = dlg.data.detail
+      dlg:modify{ id = "help", text = DETAIL_HELP[dlg.data.detail] }
+      rebuild()
+    end }
+  dlg:label{ id = "help", text = DETAIL_HELP[detail] }
   dlg:combobox{ id = "speed", label = "Speed",
     option = "Normal", options = { "Slow", "Normal", "Fast", "Fastest" },
     onchange = function()
-      local mul = ({ Slow = 0.25, Normal = 1, Fast = 3, Fastest = 10 })[dlg.data.speed]
-      perTick = math.max(1, math.ceil(total / 300 * mul))
+      speed = ({ Slow = 0.25, Normal = 1, Fast = 3, Fastest = 10 })[dlg.data.speed]
     end }
-  dlg:check{ id = "hide", label = "Undone strokes", text = "Leave out", selected = hide,
-    onclick = function()
-      stop()
-      if dlg.data.hide then player.hideUndone(entries) else player.showAll(entries) end
-      p:refresh()
-      total = p:total()
-      pcall(function() dlg:modify{ id = "pos", max = total } end)
-      dlg:modify{ id = "stats", text = stats() }
-      setPos(total)
-    end }
+  dlg:check{ id = "hide", label = "Undone strokes", text = "Leave out", selected = true,
+    onclick = rebuild }
   dlg:button{ id = "play", text = "Play", onclick = function()
     if timer.isRunning then stop() return end
     if pos >= total then setPos(0) end
@@ -167,11 +194,10 @@ function M.play(rec, prefs)
   dlg:button{ text = "Export...", onclick = function()
     stop()
     M.export(rec, p, prefs)
-    -- export rewinds the player; put the preview back where it was
-    if dlg.data.hide then player.hideUndone(entries) else player.showAll(entries) end
-    p:refresh()
-    total = p:total()
-    setPos(total)
+    -- export may change the detail and rewinds the player; sync back up
+    dlg:modify{ id = "detail", option = detailOf(prefs) }
+    dlg:modify{ id = "help", text = DETAIL_HELP[detailOf(prefs)] }
+    rebuild()
   end }
   dlg:button{ text = "Close", onclick = function() timer:stop() dlg:close() end }
   dlg:show{ wait = false }

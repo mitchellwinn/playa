@@ -10,6 +10,9 @@ whole drawing back or export it as a GIF, WebP, MP4 or PNG frames.
 - **Lives in your file.** The recording is saved with the sprite, so it travels
   with the file. Files still open normally in Aseprite without the extension.
 - **Clean output.** Only the canvas: no cursor, no zooming, no UI.
+- **Every pixel, in order.** Strokes draw themselves in along the path you
+  drew them, fills flood out from where you clicked, and playback can run at
+  your real drawing speed.
 - **Mistakes optional.** Undone strokes can be left out of the timelapse, or
   kept in if you like showing the process.
 - **Small.** Only the pixels that changed are stored, compressed. A typical
@@ -26,7 +29,7 @@ Requires Aseprite 1.3 or newer.
 
 ## Use
 
-Everything is under **File > Export > Playa**:
+Everything is under **File > Playa**:
 
 | Command | What it does |
 | --- | --- |
@@ -40,7 +43,12 @@ The recording is written into the file when you save, like any other change.
 
 ### Export settings
 
-- **Length**: how long the timelapse runs. Strokes are spread evenly across it.
+- **Detail**:
+  - *Strokes*: each stroke appears at once.
+  - *Pixels*: strokes draw in pixel by pixel, in the order you drew them.
+  - *Real time*: strokes draw at the speed you drew them, and pauses are kept
+    but shortened.
+- **Length**: how long the timelapse runs. The drawing is spread evenly across it.
 - **Frames/sec**: playback smoothness.
 - **Hold end**: how long the finished piece stays on screen.
 - **Scale**: whole-number pixel scaling, so pixels stay crisp.
@@ -58,8 +66,13 @@ it (run-length encoding, then base64). The patches are stored as custom
 properties on the sprite, which Aseprite saves inside the `.aseprite` file.
 Undo and redo are recorded too, which is how undone strokes can be left out.
 
+While you draw, Playa also follows the cursor, so each stroke knows the path
+it was drawn along and how long it took. Playback uses that path to put the
+stroke's pixels in drawing order. Pixels the cursor never passed over (fills,
+shapes, wide brushes) spread out from the ones it did.
+
 Playback rebuilds the canvas patch by patch, so a timelapse can be rendered at
-any length or speed after the fact.
+any length, speed or level of detail after the fact.
 
 ### Limits
 
@@ -68,6 +81,8 @@ any length or speed after the fact.
 - The recording follows what you see: the visible layers of the frame you are
   working on. Hiding a layer shows up as a change.
 - For animations, playback shows whichever frame you were editing at the time.
+- Recordings made before 0.2 have no cursor paths. Their strokes still draw
+  in pixel by pixel, but the order is worked out from each stroke's shape.
 
 ## Develop
 
@@ -82,6 +97,7 @@ The code is plain Lua in `src/`:
 | --- | --- |
 | `playa.lua` | Extension entry point: menus and event hooks. |
 | `recorder.lua` | Change detection and storage in sprite properties. |
+| `order.lua` | Works out the order a stroke's pixels were drawn in. |
 | `codec.lua` | RLE + base64 pixel encoding. |
 | `player.lua` | Rebuilds the canvas from the recording. |
 | `export.lua` | GIF, WebP, PNG and MP4 output. |

@@ -1,6 +1,10 @@
 -- Playa player: rebuilds the canvas from recorded lines, step by step.
 
 local codec = dofile(app.fs.joinPath(PLAYA_PATH, "codec.lua"))
+local order = dofile(app.fs.joinPath(PLAYA_PATH, "order.lua"))
+
+local PIXEL_CAP = 40   -- most animation units one stroke gets in Pixels mode
+local IDLE_MAX = 90    -- longest pause kept in Real time mode, in ticks (1/60 s)
 
 local M = {}
 
@@ -60,14 +64,30 @@ end
 
 -- Player -------------------------------------------------------------------
 
+local function patchImage(e)
+  if not e.img then
+    local img = Image(ImageSpec{ width = e.w, height = e.h, colorMode = ColorMode.RGB })
+    img.bytes = codec.decode(e.data)
+    e.img = img
+  end
+  return e.img
+end
+
 local Player = {}
 Player.__index = Player
 
 -- `steps` are indices of entries that change pixels and are not hidden.
-function M.new(entries, width, height)
-  local p = setmetatable({ entries = entries, width = width, height = height }, Player)
+-- mode: "strokes" (one unit per edit), "pixels" (strokes draw in pixel by
+-- pixel), "realtime" (strokes draw at recorded speed, pauses kept up to a cap)
+function M.new(entries, width, height, mode)
+  local p = setmetatable({ entries = entries, width = width, height = height,
+                           mode = mode or "strokes" }, Player)
   p:refresh()
   return p
+end
+
+local function animated(e)
+  return e.kind == "e" and not e.full and e.w > 0
 end
 
 function Player:refresh()
@@ -81,7 +101,93 @@ function Player:refresh()
     end
   end
   if maxW > 0 then self.width, self.height = maxW, maxH end
+  -- which strokes are hidden changes what each stroke drew over
+  for _, e in ipairs(self.entries) do e.order = nil end
+  self:timeline()
+end
+
+function Player:setMode(mode)
+  self.mode = mode
+  self:timeline()
+end
+
+-- Units per step: cum[s] is where step s is fully drawn, gap[s] the pause
+-- before it starts drawing.
+function Player:timeline()
   self:reset()
+  local mode = self.mode
+  if mode ~= "strokes" then
+    for s = 1, #self.steps do
+      local e = self.entries[self.steps[s]]
+      if animated(e) and not e.order then
+        self:seek(s - 1)
+        e.order = order.compute(self:canvas(e.frame), patchImage(e), e)
+      end
+    end
+    self:reset()
+  end
+
+  self.cum, self.gap = {}, {}
+  local total, prevEnd, prevT = 0, nil, nil
+  for s, idx in ipairs(self.steps) do
+    local e = self.entries[idx]
+    local gap, cost = 0, 1
+    if mode == "pixels" and animated(e) then
+      cost = math.max(1, math.min(#e.order.pixels, PIXEL_CAP))
+    elseif mode == "realtime" then
+      local start = order.pathStart(e.path)
+      if start and prevEnd and start >= prevEnd then
+        gap = start - prevEnd
+      elseif prevT then
+        gap = (e.t - prevT) * 60
+      end
+      gap = math.max(0, math.min(gap, IDLE_MAX))
+      if animated(e) then
+        cost = e.order.ticks > 0 and e.order.ticks or math.min(#e.order.pixels, PIXEL_CAP) * 2
+        cost = math.max(1, cost)
+      end
+      if start then prevEnd = start + (e.order and e.order.ticks or 0) end
+      prevT = e.t
+    end
+    total = total + gap + cost
+    self.gap[s] = gap
+    self.cum[s] = total
+  end
+  self.units = total
+end
+
+function Player:totalUnits() return self.units or #self.steps end
+
+-- The picture at a point on the timeline, drawing part of a stroke when the
+-- point falls inside one.
+function Player:at(u)
+  local cum = self.cum
+  local n = #self.steps
+  if n == 0 or u <= 0 then return self:seek(0) end
+  if u >= cum[n] then return self:seek(n) end
+  local lo, hi = 1, n
+  while lo < hi do
+    local mid = (lo + hi) // 2
+    if cum[mid] >= u then hi = mid else lo = mid + 1 end
+  end
+  local s = lo
+  local startU = (s > 1 and cum[s - 1] or 0) + self.gap[s]
+  local span = cum[s] - startU
+  local f = span > 0 and (u - startU) / span or 1
+  if f >= 1 then return self:seek(s) end
+  local e = self.entries[self.steps[s]]
+  if f <= 0 or self.mode == "strokes" or not e.order then return self:seek(s - 1) end
+
+  self:seek(s - 1)
+  local img = Image(self:canvas(e.frame))
+  local marks = self.mode == "realtime" and e.order.time or e.order.rank
+  for k, px in ipairs(e.order.pixels) do
+    if marks[k] >= f then break end
+    img:drawPixel(px.x, px.y, px.color)
+  end
+  self.partial = img
+  self.frame = e.frame
+  return img
 end
 
 function Player:reset()
@@ -89,16 +195,9 @@ function Player:reset()
   self.pos = 0       -- number of steps applied
   self.applied = 0   -- entries walked so far
   self.frame = 1
+  self.partial = nil
 end
 
-local function patchImage(e)
-  if not e.img then
-    local img = Image(ImageSpec{ width = e.w, height = e.h, colorMode = ColorMode.RGB })
-    img.bytes = codec.decode(e.data)
-    e.img = img
-  end
-  return e.img
-end
 
 function Player:canvas(frame)
   local c = self.canvases[frame]
@@ -124,6 +223,7 @@ end
 
 -- Advance until `n` steps have been applied (rewinds when going backward).
 function Player:seek(n)
+  self.partial = nil
   n = math.max(0, math.min(n, #self.steps))
   if n < self.pos then self:reset() end
   while self.pos < n do
@@ -136,7 +236,7 @@ function Player:seek(n)
 end
 
 function Player:current()
-  return self:canvas(self.frame)
+  return self.partial or self:canvas(self.frame)
 end
 
 function Player:total() return #self.steps end

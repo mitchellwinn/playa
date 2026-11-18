@@ -20,13 +20,16 @@ function M.findFfmpeg()
   return "ffmpeg"  -- hope it is on PATH
 end
 
--- Which step to show on each output frame.
-function M.plan(totalSteps, seconds, fps)
-  -- Short recordings repeat steps so the timelapse still lasts `seconds`.
+-- Where on the player's timeline each output frame sits. Whole strokes only
+-- in Strokes mode; other modes can land partway through a stroke.
+function M.plan(totalUnits, seconds, fps, whole)
+  -- Short recordings repeat pictures so the timelapse still lasts `seconds`.
   local count = math.max(1, math.floor(seconds * fps + 0.5))
   local positions = {}
   for i = 1, count do
-    positions[i] = math.max(1, math.min(totalSteps, math.ceil(i * totalSteps / count)))
+    local u = i * totalUnits / count
+    if whole then u = math.max(1, math.min(totalUnits, math.ceil(u))) end
+    positions[i] = u
   end
   return positions
 end
@@ -52,7 +55,7 @@ function M.run(player, opts)
 
   local w, h = player.width, player.height
   local scale = math.max(1, math.floor(opts.scale or 1))
-  local positions = M.plan(total, opts.seconds, opts.fps)
+  local positions = M.plan(player:totalUnits(), opts.seconds, opts.fps, player.mode == "strokes")
   local holdFrames = math.floor((opts.hold or 0) * opts.fps + 0.5)
   local format = opts.format
 
@@ -67,17 +70,19 @@ function M.run(player, opts)
     if format == "gif" or format == "webp" then
       local spr = Sprite(w * scale, h * scale, ColorMode.RGB)
       local layer = spr.layers[1]
-      local frames, lastPos = 0, nil
+      local frames, lastBytes = 0, nil
       for _, pos in ipairs(positions) do
-        if pos == lastPos then
+        local img = render(player:at(pos), w, h, scale, opts.bg)
+        local bytes = img.bytes
+        if bytes == lastBytes then
           -- Same picture again: lengthen the previous frame instead.
           spr.frames[frames].duration = spr.frames[frames].duration + 1 / opts.fps
         else
           frames = frames + 1
           if frames > 1 then spr:newEmptyFrame(frames) end
-          spr:newCel(layer, frames, render(player:seek(pos), w, h, scale, opts.bg), Point(0, 0))
+          spr:newCel(layer, frames, img, Point(0, 0))
           spr.frames[frames].duration = 1 / opts.fps
-          lastPos = pos
+          lastBytes = bytes
         end
       end
       spr.frames[frames].duration = spr.frames[frames].duration + (opts.hold or 0)
@@ -101,7 +106,7 @@ function M.run(player, opts)
     local n = 0
     local last
     for _, pos in ipairs(positions) do
-      last = render(player:seek(pos), w, h, scale, opts.bg)
+      last = render(player:at(pos), w, h, scale, opts.bg)
       n = n + 1
       local file = app.fs.joinPath(dir, base .. pad(n) .. ".png")
       last:saveAs(file)
