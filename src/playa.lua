@@ -93,6 +93,8 @@ local function beforeCommand(ev)
   if not rec then return end
   if ev.name == "Undo" then rec.pending = "u"
   elseif ev.name == "Redo" then rec.pending = "r"
+  elseif ev.name ~= "" and not SAVE[ev.name] then
+    rec.command = ev.name
   elseif SAVE[ev.name] then
     rec:flush()
     if rec.dirty then rec:save() end
@@ -102,7 +104,10 @@ end
 local function afterCommand(ev)
   if not app.sprite then return end
   local rec = find(app.sprite)
-  if rec then rec.pending = nil end
+  if rec then
+    rec.pending = nil
+    rec.command = nil
+  end
 end
 
 function init(plugin)

@@ -15,6 +15,8 @@
 --   path  optional cursor path during an edit: "tick|x:y:dt;x:y:dt;..." in
 --         sprite pixels, dt in ticks (1/60 s) since the first point. The
 --         last point is where the cursor was when the stroke ended.
+--   tool  id of the active tool when the change happened (pencil, paint_bucket)
+--   cmd   command that made the change, if any (Fill, DeselectMask, Paste)
 --
 -- Every change event writes exactly one e/u/r/h line, even an invisible one,
 -- so undo lines can be matched to the edits they revert.
@@ -147,10 +149,12 @@ function Rec:currentFrame()
   return 1
 end
 
-function Rec:push(kind, full, frame, x, y, w, h, data, path)
+function Rec:push(kind, full, frame, x, y, w, h, data, path, tool, cmd)
   local line = string.format("%s,%d,%d,%d,%d,%d,%d,%d,%s",
     kind, full and 1 or 0, frame, x, y, w, h, os.time(), data or "")
-  if path then line = line .. "," .. path end
+  if path or tool or cmd then
+    line = line .. "," .. (path or "") .. "," .. (tool or "") .. "," .. (cmd or "")
+  end
   self.lines[#self.lines + 1] = line
   self.dirty = true
 end
@@ -213,9 +217,12 @@ end
 -- so the canvas is compared later from the timer, via Rec:flush().
 function Rec:onChange(ev)
   if not self.on then return end
+  local okTool, tool = pcall(function() return app.tool and app.tool.id end)
   self.queue[#self.queue + 1] = {
     kind = ev.fromUndo and (self.pending or "h") or "e",
     frame = self:currentFrame(),
+    tool = okTool and tool or nil,
+    cmd = self.command,
   }
   if not PLAYA_DEFER then self:flush() end
 end
@@ -253,7 +260,8 @@ function Rec:flush()
         if x then
           local path = q.kind == "e" and self:takePath(x, y, dw, dh) or nil
           self:push(q.kind, false, frame, x, y, dw, dh,
-                    codec.encode(crop(bytes, w, x, y, dw, dh)), path)
+                    codec.encode(crop(bytes, w, x, y, dw, dh)), path,
+                    q.kind == "e" and q.tool or nil, q.kind == "e" and q.cmd or nil)
         else
           self.trail = {}
           self:push(q.kind, false, frame, 0, 0, 0, 0, nil)

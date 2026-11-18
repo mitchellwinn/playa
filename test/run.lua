@@ -205,6 +205,71 @@ local after = pp:at(pp.cum[s1]).bytes
 check(mid ~= before and mid ~= after, "pixels: halfway through the first stroke is partly drawn")
 PLAYA_POINTER = nil
 
+-- fills, moves and commands ------------------------------------------------
+local ms = Sprite(40, 40)
+local mrec = recorder.load(ms)
+ms.events:on("change", function(ev) mrec:onChange(ev) end)
+app.events:on("beforecommand", function(ev) if ev.name ~= "" then mrec.command = ev.name end end)
+app.events:on("aftercommand", function() mrec.command = nil end)
+mrec:start()
+local mcursor, mtick = nil, 0
+PLAYA_POINTER = function() if mcursor then mtick = mtick + 1 return mcursor.x, mcursor.y, mtick end end
+local function lastOrdered(mode)
+  local es = player.parse(mrec.lines)
+  player.hideUndone(es)
+  local pl = player.new(es, ms.width, ms.height, mode or "pixels")
+  return es[pl.steps[#pl.steps]], pl
+end
+
+-- bucket fill after hovering across the region: floods from the click
+app.tool = "rectangle"
+app.useTool{ tool = "rectangle", color = blue, points = { Point(2, 2), Point(30, 30) } }
+app.tool = "paint_bucket"
+for k = 0, 10 do mtick = mtick + 2 mrec:pointer(4 + k * 2, 4 + k, mtick) end   -- hover in
+mcursor = Point(24, 14)
+app.useTool{ tool = "paint_bucket", color = green, points = { Point(24, 14) } }
+mcursor = nil
+local fillE = lastOrdered()
+local f1 = fillE.order.pixels[1]
+check(not fillE.order.move and math.abs(f1.x - 24) <= 1 and math.abs(f1.y - 14) <= 1,
+      "bucket after hovering still floods from the click (" .. f1.x .. "," .. f1.y .. ")")
+
+-- a two-color chunk on its own layer, moved by (12, 6)
+local chunkLayer = ms:newLayer()
+app.tool = "pencil"
+app.useTool{ tool = "filled_rectangle", color = red, layer = chunkLayer, points = { Point(4, 4), Point(9, 9) } }
+app.useTool{ tool = "pencil", color = blue, layer = chunkLayer, points = { Point(5, 5), Point(8, 5) } }
+app.tool = "move"
+app.transaction("move", function()
+  local cel = chunkLayer:cel(1)
+  cel.position = Point(cel.position.x + 12, cel.position.y + 6)
+end)
+local moveE, mp = lastOrdered()
+check(moveE.order and moveE.order.move and moveE.order.dx == 12 and moveE.order.dy == 6,
+      "moved chunk detected with its offset")
+local base = mp.steps[#mp.steps - 1] and mp.cum[#mp.steps - 1] or 0
+local half = mp:at(base + (mp.cum[#mp.steps] - base) / 2)
+check(half:getPixel(4 + 6, 4 + 3) == app.pixelColor.rgba(255, 0, 0, 255),
+      "halfway through the slide the chunk is halfway there")
+check(mp:at(mp:totalUnits()).bytes == recorder.composite(ms, 1), "slide ends on the final canvas")
+
+-- Edit > Fill spreads from the middle of the selection
+app.tool = "rectangular_marquee"
+ms.selection = Selection(Rectangle(30, 30, 8, 8))
+app.fgColor = Color{ r = 250, g = 200, b = 0, a = 255 }
+app.command.Fill()
+ms.selection = Selection()
+local cmdE = lastOrdered()
+local c1 = cmdE.order.pixels and cmdE.order.pixels[1]
+check(cmdE.cmd == "Fill" and not cmdE.order.move and c1 and c1.x >= 32 and c1.x <= 35 and c1.y >= 32 and c1.y <= 35,
+      "Fill command recorded and spreads from the middle")
+for _, mode in ipairs{ "strokes", "pixels", "realtime" } do
+  local _, pl = lastOrdered(mode)
+  check(pl:at(pl:totalUnits()).bytes == recorder.composite(ms, 1), mode .. ": ends on the final canvas")
+end
+app.tool = "pencil"
+PLAYA_POINTER = nil
+
 -- recordings saved under the 0.1.0 property name still load, then move over
 local legacy = Sprite(8, 8)
 legacy.properties("s.playa").chunks = { "e,0,1,0,0,0,0,1,\ne,0,1,0,0,0,0,2," }

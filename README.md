@@ -11,8 +11,8 @@ whole drawing back or export it as a GIF, WebP, MP4 or PNG frames.
   with the file. Files still open normally in Aseprite without the extension.
 - **Clean output.** Only the canvas: no cursor, no zooming, no UI.
 - **Every pixel, in order.** Strokes draw themselves in along the path you
-  drew them, fills flood out from where you clicked, and playback can run at
-  your real drawing speed.
+  drew them, fills flood out from where you clicked, moved selections slide
+  into place, and playback can run at your real drawing speed.
 - **Mistakes optional.** Undone strokes can be left out of the timelapse, or
   kept in if you like showing the process.
 - **Small.** Only the pixels that changed are stored, compressed. A typical
@@ -66,10 +66,17 @@ it (run-length encoding, then base64). The patches are stored as custom
 properties on the sprite, which Aseprite saves inside the `.aseprite` file.
 Undo and redo are recorded too, which is how undone strokes can be left out.
 
-While you draw, Playa also follows the cursor, so each stroke knows the path
-it was drawn along and how long it took. Playback uses that path to put the
-stroke's pixels in drawing order. Pixels the cursor never passed over (fills,
-shapes, wide brushes) spread out from the ones it did.
+While you draw, Playa also follows the cursor and notes which tool or
+command made each change. Playback uses that to rebuild how the pixels got
+there:
+
+- **Brushes and pencils** follow the path you drew, at the speed you drew it.
+- **Bucket fills** flood out from where you clicked.
+- **Lines and shapes** grow from where the drag started.
+- **Gradients** sweep in the direction you dragged.
+- **Moved pixels** (the Move tool, dragged selections) slide from where they
+  were to where they landed.
+- **Commands** such as Edit > Fill spread out from the middle.
 
 Playback rebuilds the canvas patch by patch, so a timelapse can be rendered at
 any length, speed or level of detail after the fact.
@@ -81,6 +88,8 @@ any length, speed or level of detail after the fact.
 - The recording follows what you see: the visible layers of the frame you are
   working on. Hiding a layer shows up as a change.
 - For animations, playback shows whichever frame you were editing at the time.
+- Rotating or scaling a selection plays as the new pixels appearing, not as
+  a turn or a stretch.
 - Recordings made before 0.2 have no cursor paths. Their strokes still draw
   in pixel by pixel, but the order is worked out from each stroke's shape.
 

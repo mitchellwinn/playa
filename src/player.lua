@@ -5,19 +5,22 @@ local order = dofile(app.fs.joinPath(PLAYA_PATH, "order.lua"))
 
 local PIXEL_CAP = 40   -- most animation units one stroke gets in Pixels mode
 local IDLE_MAX = 90    -- longest pause kept in Real time mode, in ticks (1/60 s)
+local SLIDE_UNITS = 20 -- how long a moved chunk takes to slide in Pixels mode
 
 local M = {}
 
 function M.parse(lines)
   local entries = {}
   for i, line in ipairs(lines) do
-    local kind, full, frame, x, y, w, h, t, data, path =
+    local kind, full, frame, x, y, w, h, t, data, rest =
       line:match("^(%a),(%d),(%d+),(%-?%d+),(%-?%d+),(%d+),(%d+),(%d+),([^,]*),?(.*)$")
+    local path, tool, cmd = (rest or ""):match("^([^,]*),?([^,]*),?([^,]*)$")
     if kind then
       entries[#entries + 1] = {
         kind = kind, full = full == "1", frame = tonumber(frame),
         x = tonumber(x), y = tonumber(y), w = tonumber(w), h = tonumber(h),
         t = tonumber(t), data = data, path = path ~= "" and path or nil,
+        tool = tool ~= "" and tool or nil, cmd = cmd ~= "" and cmd or nil,
       }
     end
   end
@@ -133,7 +136,7 @@ function Player:timeline()
     local e = self.entries[idx]
     local gap, cost = 0, 1
     if mode == "pixels" and animated(e) then
-      cost = math.max(1, math.min(#e.order.pixels, PIXEL_CAP))
+      cost = e.order.move and SLIDE_UNITS or math.max(1, math.min(#e.order.pixels, PIXEL_CAP))
     elseif mode == "realtime" then
       local start = order.pathStart(e.path)
       if start and prevEnd and start >= prevEnd then
@@ -143,7 +146,11 @@ function Player:timeline()
       end
       gap = math.max(0, math.min(gap, IDLE_MAX))
       if animated(e) then
-        cost = e.order.ticks > 0 and e.order.ticks or math.min(#e.order.pixels, PIXEL_CAP) * 2
+        if e.order.move then
+          cost = e.order.ticks > 0 and math.max(10, math.min(e.order.ticks, 120)) or SLIDE_UNITS
+        else
+          cost = e.order.ticks > 0 and e.order.ticks or math.min(#e.order.pixels, PIXEL_CAP) * 2
+        end
         cost = math.max(1, cost)
       end
       if start then prevEnd = start + (e.order and e.order.ticks or 0) end
@@ -180,6 +187,20 @@ function Player:at(u)
 
   self:seek(s - 1)
   local img = Image(self:canvas(e.frame))
+  if e.order.move then
+    -- uncover what lies under the chunk, then draw it partway along the slide
+    local o = e.order
+    local ox, oy = math.floor(o.dx * f + 0.5), math.floor(o.dy * f + 0.5)
+    local iw, ih = img.width, img.height
+    for _, px in ipairs(o.base) do img:drawPixel(px.x, px.y, px.color) end
+    for _, px in ipairs(o.chunk) do
+      local x, y = px.x + ox, px.y + oy
+      if x >= 0 and y >= 0 and x < iw and y < ih then img:drawPixel(x, y, px.color) end
+    end
+    self.partial = img
+    self.frame = e.frame
+    return img
+  end
   local marks = self.mode == "realtime" and e.order.time or e.order.rank
   for k, px in ipairs(e.order.pixels) do
     if marks[k] >= f then break end
