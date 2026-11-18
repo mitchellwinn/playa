@@ -7,13 +7,13 @@ local M = {}
 function M.parse(lines)
   local entries = {}
   for i, line in ipairs(lines) do
-    local kind, full, frame, x, y, w, h, t, data =
-      line:match("^(%a),(%d),(%d+),(%-?%d+),(%-?%d+),(%d+),(%d+),(%d+),(.*)$")
+    local kind, full, frame, x, y, w, h, t, data, path =
+      line:match("^(%a),(%d),(%d+),(%-?%d+),(%-?%d+),(%d+),(%d+),(%d+),([^,]*),?(.*)$")
     if kind then
       entries[#entries + 1] = {
         kind = kind, full = full == "1", frame = tonumber(frame),
         x = tonumber(x), y = tonumber(y), w = tonumber(w), h = tonumber(h),
-        t = tonumber(t), data = data,
+        t = tonumber(t), data = data, path = path ~= "" and path or nil,
       }
     end
   end

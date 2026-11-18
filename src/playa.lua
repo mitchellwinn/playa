@@ -8,6 +8,7 @@ local recorder, player, ui
 local recs = {}        -- { sprite = Sprite, rec = Rec, listener = id }
 local prefs
 local listeners = {}
+local sampler
 
 local function find(spr)
   for i, r in ipairs(recs) do
@@ -48,14 +49,40 @@ local function active()
   return attach(app.sprite)
 end
 
+-- Only bookkeeping here: sitechange can fire in the middle of a stroke (when
+-- the first stroke on a layer creates its cel), so no sprite reads.
 local function onSiteChange()
   if PLAYA_BUSY then return end
   prune()
-  local rec = active()
-  if rec and rec.on and app.frame then
-    local ok, err = pcall(rec.look, rec, app.frame.frameNumber)
-    if not ok then print("Playa: " .. tostring(err)) end
+  active()
+end
+
+-- Cursor sampling: the timer feeds each stroke's path to its recording, so
+-- playback can draw the stroke's pixels in the order they were laid down.
+PLAYA_TICK = 0
+
+function PLAYA_POINTER()
+  local ed = app.editor
+  if not ed then return nil end
+  local ok, pos = pcall(function() return ed.spritePos end)
+  if not ok or not pos then return nil end
+  return pos.x, pos.y, PLAYA_TICK
+end
+
+local function onTick()
+  PLAYA_TICK = PLAYA_TICK + 1
+  if PLAYA_BUSY then return end
+  for _, r in ipairs(recs) do
+    if #r.rec.queue > 0 then
+      local ok, err = pcall(r.rec.flush, r.rec)
+      if not ok then r.rec.queue = {} print("Playa: " .. tostring(err)) end
+    end
   end
+  if not app.sprite then return end
+  local rec = find(app.sprite)
+  if not rec or not rec.on then return end
+  local x, y, tick = PLAYA_POINTER()
+  if x then rec:pointer(x, y, tick) end
 end
 
 local SAVE = { SaveFile = true, SaveFileAs = true, SaveFileCopyAs = true }
@@ -66,8 +93,9 @@ local function beforeCommand(ev)
   if not rec then return end
   if ev.name == "Undo" then rec.pending = "u"
   elseif ev.name == "Redo" then rec.pending = "r"
-  elseif SAVE[ev.name] and rec.dirty then
-    rec:save()
+  elseif SAVE[ev.name] then
+    rec:flush()
+    if rec.dirty then rec:save() end
   end
 end
 
@@ -88,6 +116,16 @@ function init(plugin)
   listeners.site = app.events:on("sitechange", onSiteChange)
   listeners.before = app.events:on("beforecommand", beforeCommand)
   listeners.after = app.events:on("aftercommand", afterCommand)
+
+  -- Timer is unavailable in batch mode.
+  if Timer and app.isUIAvailable ~= false then
+    local ok, t = pcall(function() return Timer{ interval = 1 / 60, ontick = onTick } end)
+    if ok and t then
+      sampler = t
+      sampler:start()
+      PLAYA_DEFER = true
+    end
+  end
 
   plugin:newMenuGroup{ id = "playa_menu", title = "Playa", group = "file_export" }
 
@@ -110,7 +148,7 @@ function init(plugin)
     onenabled = function() return app.sprite ~= nil end,
     onclick = function()
       local rec = active()
-      if rec then ui.play(rec, prefs) end
+      if rec then rec:flush() ui.play(rec, prefs) end
     end,
   }
 
@@ -120,6 +158,7 @@ function init(plugin)
     onclick = function()
       local rec = active()
       if not rec then return end
+      rec:flush()
       local p = player.new(player.parse(rec.lines), rec.sprite.width, rec.sprite.height)
       if p:total() == 0 then
         app.alert{ title = "Playa", text = "Nothing recorded yet." }
@@ -158,6 +197,7 @@ function init(plugin)
 end
 
 function exit(plugin)
+  if sampler then sampler:stop() end
   for _, id in pairs(listeners) do app.events:off(id) end
   for _, r in ipairs(recs) do pcall(function() r.sprite.events:off(r.listener) end) end
   recs = {}

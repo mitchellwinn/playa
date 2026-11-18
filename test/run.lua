@@ -94,6 +94,36 @@ for _, fmt in ipairs{ "gif", "webp", "png", "mp4" } do
   check(ok and exists, "export " .. fmt .. ": " .. tostring(msg))
 end
 
+-- deferred mode: changes queue up and are compared later, several at once
+PLAYA_DEFER = true
+local ds = Sprite(24, 24)
+local drec = recorder.load(ds)
+ds.events:on("change", function(ev) drec:onChange(ev) end)
+app.events:on("beforecommand", function(ev)
+  if ev.name == "Undo" then drec.pending = "u" elseif ev.name == "Redo" then drec.pending = "r" end
+end)
+app.events:on("aftercommand", function() drec.pending = nil end)
+drec:start()
+app.useTool{ tool = "pencil", color = red, points = { Point(1, 1), Point(10, 1) } }
+drec:flush()
+app.useTool{ tool = "pencil", color = green, points = { Point(1, 5), Point(10, 5) } }
+app.useTool{ tool = "pencil", color = blue, points = { Point(1, 9), Point(10, 9) } }
+app.command.Undo()
+app.command.Undo()                       -- four changes queued, one flush
+check(#drec.queue == 4, "changes queue until flush")
+drec:flush()
+app.useTool{ tool = "pencil", color = blue, points = { Point(5, 0), Point(5, 20) } }
+drec:flush()
+local dfinal = recorder.composite(ds, 1)
+local de = player.parse(drec.lines)
+player.hideUndone(de)
+local dp = player.new(de, ds.width, ds.height)
+check(dp:seek(dp:total()).bytes == dfinal, "deferred replay matches final canvas")
+local dhidden = 0
+for _, e in ipairs(de) do if e.hidden then dhidden = dhidden + 1 end end
+check(dhidden == 4, "queued undos still pair with their edits (got " .. dhidden .. ")")
+PLAYA_DEFER = nil
+
 -- recordings saved under the 0.1.0 property name still load, then move over
 local legacy = Sprite(8, 8)
 legacy.properties("s.playa").chunks = { "e,0,1,0,0,0,0,1,\ne,0,1,0,0,0,0,2," }

@@ -12,6 +12,9 @@
 --   x,y,w,h  changed rectangle (w = 0 means no visible change)
 --   t     unix time in seconds
 --   data  RGBA pixels of the rectangle after the change, RLE + base64
+--   path  optional cursor path during an edit: "tick|x:y:dt;x:y:dt;..." in
+--         sprite pixels, dt in ticks (1/60 s) since the first point. The
+--         last point is where the cursor was when the stroke ended.
 --
 -- Every change event writes exactly one e/u/r/h line, even an invisible one,
 -- so undo lines can be matched to the edits they revert.
@@ -29,6 +32,9 @@ local CHUNK = 60000
 local FORMAT = 1
 
 local ssub = string.sub
+
+local TRAIL_MAX = 1200   -- about 20 s of cursor movement at 60 Hz
+local TRAIL_MARGIN = 2   -- cursor may sit this far outside the changed rect
 
 -- Composite of what the artist sees on one frame, as RGBA bytes.
 local function composite(spr, frameNumber)
@@ -101,6 +107,8 @@ function M.load(spr)
     on = props.on,   -- nil: never decided for this sprite (auto-record pref applies)
     dirty = migrated,   -- moved to the current property name on next save
     migrated = migrated,
+    trail = {},      -- recent cursor positions { x, y, tick }
+    queue = {},      -- change events waiting for flush()
   }, Rec)
   local chunks = props.chunks
   if type(chunks) == "table" and #chunks > 0 then
@@ -139,10 +147,60 @@ function Rec:currentFrame()
   return 1
 end
 
-function Rec:push(kind, full, frame, x, y, w, h, data)
-  self.lines[#self.lines + 1] = string.format("%s,%d,%d,%d,%d,%d,%d,%d,%s",
+function Rec:push(kind, full, frame, x, y, w, h, data, path)
+  local line = string.format("%s,%d,%d,%d,%d,%d,%d,%d,%s",
     kind, full and 1 or 0, frame, x, y, w, h, os.time(), data or "")
+  if path then line = line .. "," .. path end
+  self.lines[#self.lines + 1] = line
   self.dirty = true
+end
+
+-- Called by the polling timer with the cursor position in sprite pixels.
+function Rec:pointer(x, y, tick)
+  local t = self.trail
+  local last = t[#t]
+  if last and last.x == x and last.y == y then return end
+  t[#t + 1] = { x = x, y = y, tick = tick }
+  if #t > TRAIL_MAX then table.remove(t, 1) end
+end
+
+-- The cursor path of the stroke that just ended: the tail of the trail that
+-- stays inside the changed rectangle. Movement before the stroke (hovering in
+-- from elsewhere) is cut off where the cursor was last outside it.
+function Rec:takePath(x, y, w, h)
+  local t = self.trail
+  self.trail = {}
+  if PLAYA_POINTER then
+    local px, py, tick = PLAYA_POINTER()
+    if px then
+      local last = t[#t]
+      if not last or last.x ~= px or last.y ~= py then
+        t[#t + 1] = { x = px, y = py, tick = tick }
+      end
+    end
+  end
+  if #t == 0 then return nil end
+  local first = #t
+  for i = #t, 1, -1 do
+    local p = t[i]
+    if p.x < x - TRAIL_MARGIN or p.y < y - TRAIL_MARGIN
+       or p.x >= x + w + TRAIL_MARGIN or p.y >= y + h + TRAIL_MARGIN then
+      break
+    end
+    first = i
+  end
+  local last = t[#t]
+  if last.x < x - TRAIL_MARGIN or last.y < y - TRAIL_MARGIN
+     or last.x >= x + w + TRAIL_MARGIN or last.y >= y + h + TRAIL_MARGIN then
+    return nil  -- cursor is nowhere near the change (menu command, script)
+  end
+  local t0 = t[first].tick
+  local pts = {}
+  for i = first, #t do
+    local p = t[i]
+    pts[#pts + 1] = string.format("%d:%d:%d", p.x, p.y, p.tick - t0)
+  end
+  return t0 .. "|" .. table.concat(pts, ";")
 end
 
 function Rec:keyframe(kind, frame, c)
@@ -150,65 +208,81 @@ function Rec:keyframe(kind, frame, c)
   c.logged = true
 end
 
--- Take a fresh look at a frame. Logs a sync line when the canvas changed
--- since we last saw it (edits that touched a frame other than the active one).
-function Rec:look(frame)
-  local spr = self.sprite
-  if frame > #spr.frames then return end
-  local w, h = spr.width, spr.height
-  local bytes = composite(spr, frame)
-  local c = self.cache[frame]
-  if c and c.logged then
-    if c.w ~= w or c.h ~= h then
-      self.cache[frame] = { w = w, h = h, bytes = bytes }
-      self:keyframe("x", frame, self.cache[frame])
-      return
-    end
-    local x, y, dw, dh = diffRect(c.bytes, bytes, w, h)
-    if x then self:push("x", false, frame, x, y, dw, dh, codec.encode(crop(bytes, w, x, y, dw, dh))) end
-  end
-  self.cache[frame] = { w = w, h = h, bytes = bytes, logged = c and c.logged }
+-- Change events only queue work: reading the sprite while Aseprite is still
+-- inside an edit (a stroke being committed, a cel being created) is unsafe,
+-- so the canvas is compared later from the timer, via Rec:flush().
+function Rec:onChange(ev)
+  if not self.on then return end
+  self.queue[#self.queue + 1] = {
+    kind = ev.fromUndo and (self.pending or "h") or "e",
+    frame = self:currentFrame(),
+  }
+  if not PLAYA_DEFER then self:flush() end
 end
 
-function Rec:onChange(ev)
-  local kind = ev.fromUndo and (self.pending or "h") or "e"
-  if not self.on then return end
+function Rec:flush()
+  local queue = self.queue
+  if #queue == 0 then return end
+  self.queue = {}
+  local spr = self.sprite
+  local w, h = spr.width, spr.height
 
+  -- The last queued change on each frame carries that frame's diff; earlier
+  -- ones are logged empty so undo lines still pair with their edits.
+  local lastOnFrame = {}
+  for i, q in ipairs(queue) do lastOnFrame[q.frame] = i end
+
+  for i, q in ipairs(queue) do
+    local frame = q.frame
+    if lastOnFrame[frame] ~= i or frame > #spr.frames then
+      self:push(q.kind, false, frame, 0, 0, 0, 0, nil)
+    else
+      local bytes = composite(spr, frame)
+      local c = self.cache[frame]
+      -- First time this frame is touched: log what it looked like before.
+      if c and not c.logged and c.w == w and c.h == h then
+        self:keyframe("x", frame, c)
+      end
+      if not c or c.w ~= w or c.h ~= h then
+        local nc = { w = w, h = h, bytes = bytes }
+        self.cache[frame] = nc
+        self.trail = {}
+        self:keyframe(q.kind, frame, nc)
+      else
+        local x, y, dw, dh = diffRect(c.bytes, bytes, w, h)
+        if x then
+          local path = q.kind == "e" and self:takePath(x, y, dw, dh) or nil
+          self:push(q.kind, false, frame, x, y, dw, dh,
+                    codec.encode(crop(bytes, w, x, y, dw, dh)), path)
+        else
+          self.trail = {}
+          self:push(q.kind, false, frame, 0, 0, 0, 0, nil)
+        end
+        c.bytes = bytes
+      end
+    end
+  end
+end
+
+-- Remember how the current frame looks before the next edit. Only call this
+-- outside of edits (when a sprite is first seen, or from a menu command).
+function Rec:prime()
   local spr = self.sprite
   local frame = self:currentFrame()
-  local w, h = spr.width, spr.height
-  local bytes = composite(spr, frame)
-  local c = self.cache[frame]
-
-  -- First time this frame is touched: log what it looked like before.
-  if c and not c.logged and c.w == w and c.h == h then
-    self:keyframe("x", frame, c)
-  end
-
-  if not c or c.w ~= w or c.h ~= h then
-    local nc = { w = w, h = h, bytes = bytes }
-    self.cache[frame] = nc
-    self:keyframe(kind, frame, nc)
-    return
-  end
-
-  local x, y, dw, dh = diffRect(c.bytes, bytes, w, h)
-  if x then
-    self:push(kind, false, frame, x, y, dw, dh, codec.encode(crop(bytes, w, x, y, dw, dh)))
-  else
-    self:push(kind, false, frame, 0, 0, 0, 0, nil)
-  end
-  c.bytes = bytes
+  if frame > #spr.frames then return end
+  self.cache[frame] = { w = spr.width, h = spr.height, bytes = composite(spr, frame) }
 end
 
 function Rec:start()
   self.on = true
   self.cache = {}
-  self:look(self:currentFrame())
+  self.queue = {}
+  self:prime()
   self.dirty = true
 end
 
 function Rec:stop()
+  self:flush()
   self.on = false
   self.dirty = true
 end
